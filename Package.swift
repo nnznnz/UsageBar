@@ -10,8 +10,10 @@ import PackageDescription
 // exact-match allowlist — see Net/HTTPClient.swift).
 //
 // Tools version is 6.0 (matches recent Command Line Tools / Xcode 16), but the
-// code is pinned to the Swift 5 language mode via `swiftLanguageModes` so we keep
-// the exact, already-tested semantics and avoid Swift 6 strict-concurrency churn.
+// code is pinned to the Swift 5 language mode via `swiftLanguageVersions` so we
+// keep the exact, already-tested semantics and avoid Swift 6 strict-concurrency
+// churn. (We use `swiftLanguageVersions`, the parameter that exists at
+// tools-version 6.0; the `swiftLanguageModes` spelling only arrived in 6.1.)
 //
 // Structure: all logic lives in the `UsageBarKit` library so it can be unit
 // tested without a running app; `UsageBar` is a thin executable (just main.swift)
@@ -39,5 +41,5 @@ let package = Package(
             path: "Tests/UsageBarKitTests"
         )
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageVersions: [.v5]
 )
