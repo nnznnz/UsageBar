@@ -4,21 +4,35 @@ import PackageDescription
 // UsageBar — a personal, single-user AI-subscription usage tracker for the macOS menu bar.
 //
 // Design constraint: ZERO third-party dependencies. Everything here is built on
-// Apple system frameworks only (AppKit, Foundation, Security). That is the whole
-// point of the project — there is no supply chain to trust, nothing to audit but
-// the code in this repository, and no network egress except to the provider APIs
-// themselves (enforced by an allowlist, see Net/HTTPClient.swift).
+// Apple system frameworks only (AppKit, Foundation, Security, CryptoKit). There
+// is no supply chain to trust, nothing to audit but the code in this repository,
+// and no network egress except to the provider APIs themselves (enforced by an
+// exact-match allowlist — see Net/HTTPClient.swift).
+//
+// Structure: all logic lives in the `UsageBarKit` library so it can be unit
+// tested without a running app; `UsageBar` is a thin executable (just main.swift)
+// that wires the kit into a menu-bar app.
 let package = Package(
     name: "UsageBar",
     platforms: [
         .macOS(.v13)
     ],
     targets: [
+        .target(
+            name: "UsageBarKit",
+            path: "Sources/UsageBarKit"
+            // No `dependencies:` on purpose. If a Package.resolved ever appears,
+            // a dependency sneaked in — investigate before trusting the build.
+        ),
         .executableTarget(
             name: "UsageBar",
+            dependencies: ["UsageBarKit"],
             path: "Sources/UsageBar"
-            // No `dependencies:` on purpose. If you ever see a Package.resolved
-            // file appear, something pulled in a dependency — investigate it.
+        ),
+        .testTarget(
+            name: "UsageBarKitTests",
+            dependencies: ["UsageBarKit"],
+            path: "Tests/UsageBarKitTests"
         )
     ]
 )

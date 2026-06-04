@@ -27,6 +27,8 @@ fi
 
 APP_DIR="./$APP_NAME.app"
 echo "==> Assembling $APP_DIR …"
+# NOTE: this fully replaces any existing ./UsageBar.app — it is rebuilt from
+# scratch each run, so don't keep hand-edited files or custom signing inside it.
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"

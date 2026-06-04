@@ -127,14 +127,20 @@ final class HTTPClient: NSObject, URLSessionTaskDelegate {
     }
 
     private func isAllowed(_ host: String) -> Bool {
-        let h = host.lowercased()
-        if allowedHosts.contains(h) { return true }
-        // Allow exact subdomains of an allowlisted apex (e.g. "api2.cursor.sh"
-        // is allowed if "cursor.sh" is listed) but NOT arbitrary suffixes.
-        for allowed in allowedHosts where h.hasSuffix("." + allowed) {
-            return true
-        }
-        return false
+        HTTPClient.isHostAllowed(host, in: allowedHosts)
+    }
+
+    /// EXACT host match only. Every provider declares the precise hosts it needs
+    /// (e.g. "api.github.com", "api2.cursor.sh"), so there is no reason to accept
+    /// subdomains — and accepting them would mean allowlisting "api.github.com"
+    /// also allowed "evil.api.github.com", which is exactly the gap the README's
+    /// "hard allowlist" claim must not have. Static + internal so it's unit-testable
+    /// without standing up a URLSession.
+    static func isHostAllowed(_ host: String, in allowed: Set<String>) -> Bool {
+        // Normalize a possible trailing dot (FQDN form) and case.
+        var h = host.lowercased()
+        if h.hasSuffix(".") { h.removeLast() }
+        return allowed.contains(h)
     }
 
     // MARK: URLSessionTaskDelegate
