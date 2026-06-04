@@ -27,6 +27,19 @@ jobs:
       - name: Test
         run: swift test -v
 
+      # Produce a ready-to-run UsageBar.app so it can be downloaded and used
+      # without a local Swift toolchain (build.sh: swift build -c release +
+      # bundle + ad-hoc codesign).
+      - name: Bundle .app
+        run: ./build.sh
+
+      - name: Upload UsageBar.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: UsageBar-app
+          path: UsageBar.app
+          if-no-files-found: error
+
       - name: Assert no third-party dependencies crept in
         run: |
           if [ -f Package.resolved ]; then
