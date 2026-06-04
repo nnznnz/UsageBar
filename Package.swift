@@ -1,4 +1,4 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.0
 import PackageDescription
 
 // UsageBar — a personal, single-user AI-subscription usage tracker for the macOS menu bar.
@@ -8,6 +8,10 @@ import PackageDescription
 // is no supply chain to trust, nothing to audit but the code in this repository,
 // and no network egress except to the provider APIs themselves (enforced by an
 // exact-match allowlist — see Net/HTTPClient.swift).
+//
+// Tools version is 6.0 (matches recent Command Line Tools / Xcode 16), but the
+// code is pinned to the Swift 5 language mode via `swiftLanguageModes` so we keep
+// the exact, already-tested semantics and avoid Swift 6 strict-concurrency churn.
 //
 // Structure: all logic lives in the `UsageBarKit` library so it can be unit
 // tested without a running app; `UsageBar` is a thin executable (just main.swift)
@@ -34,5 +38,6 @@ let package = Package(
             dependencies: ["UsageBarKit"],
             path: "Tests/UsageBarKitTests"
         )
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )

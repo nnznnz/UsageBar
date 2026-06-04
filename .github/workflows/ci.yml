@@ -12,7 +12,9 @@ on:
 
 jobs:
   build-test:
-    runs-on: macos-14
+    # macos-15 ships Xcode 16 / Swift 6 by default, which the swift-tools-version:6.0
+    # manifest needs. (Code still compiles in Swift 5 language mode — see Package.swift.)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
