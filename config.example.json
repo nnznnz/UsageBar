@@ -1,0 +1,24 @@
+{
+  "_comment": "Copy to ~/.config/usagebar/config.json (the app also writes a starter there on first launch). Only READ by UsageBar, never written — except token refresh, see allowTokenRefresh below.",
+
+  "refreshMinutes": 15,
+
+  "providers": {
+    "claude": {
+      "enabled": true,
+      "_allowTokenRefresh": "Default false = fully read-only. Set true ONLY if you want UsageBar to refresh an expired Claude token and write it back to Claude Code's own credential store so usage stays live even when you haven't used Claude in a while. A heavy Claude user rarely needs this.",
+      "allowTokenRefresh": false
+    },
+    "codex": {
+      "enabled": false,
+      "allowTokenRefresh": false
+    },
+    "copilot": {
+      "enabled": false
+    },
+    "cursor": {
+      "_note": "Experimental. Always read-only (never writes Cursor's token). Reads Cursor's local SQLite store via the system sqlite3.",
+      "enabled": false
+    }
+  }
+}
