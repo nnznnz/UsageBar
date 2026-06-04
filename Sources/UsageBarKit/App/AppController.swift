@@ -8,7 +8,9 @@ import AppKit
 ///   • All UI and the `results` dictionary are touched ONLY on the main thread.
 ///   • A refresh cycle computes into a local dictionary on the worker, then hops
 ///     to main once to publish results and rebuild the menu.
-final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
+public final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
+
+    public override init() { super.init() }
 
     // Fixed probe/display order. Instances are created once and reused so their
     // per-provider throttle state survives across refreshes.
@@ -31,10 +33,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastRefresh: Date?
     private var isRefreshing = false
     private var timer: Timer?
+    private var lastTimerInterval: TimeInterval = 0     // restart timer only when this changes
+    private var lastEnabledIDs: Set<String> = []        // detect disable transitions to reset caches
 
     // MARK: Lifecycle
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         Config.writeStarterIfMissing()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -75,12 +79,29 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         providers.filter { config.provider($0.id).enabled }
     }
 
+    /// Restart the periodic timer ONLY when the interval actually changed, so a
+    /// manual/menu refresh doesn't churn the schedule on every click.
     private func restartTimer() {
-        timer?.invalidate()
         let interval = TimeInterval(config.refreshMinutes * 60)
+        guard interval != lastTimerInterval else { return }
+        lastTimerInterval = interval
+        timer?.invalidate()
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
+    }
+
+    /// Reset cache/throttle state for providers that were enabled last cycle but
+    /// are now disabled, so re-enabling later starts clean. Runs on main while no
+    /// fetch is in flight (the isRefreshing guard guarantees the prior worker
+    /// finished), so it can't race provider state.
+    private func resetDisabledProviders() {
+        let enabledIDs = Set(enabledProviders().map { $0.id })
+        for provider in providers where lastEnabledIDs.contains(provider.id) && !enabledIDs.contains(provider.id) {
+            provider.reset()
+            Log.info("reset cache for now-disabled provider: \(provider.id)")
+        }
+        lastEnabledIDs = enabledIDs
     }
 
     // MARK: Refresh
@@ -89,14 +110,18 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !isRefreshing else { return }
         isRefreshing = true
         reloadConfigAndClient()
-        restartTimer()   // pick up any refreshMinutes change
+        resetDisabledProviders()
+        restartTimer()   // (no-op unless refreshMinutes changed)
 
         let toProbe = enabledProviders()
         let cfg = self.config          // Config is a struct → value copy, race-free
         let client = self.client
 
-        workQueue.async { [weak self] in
-            guard let self = self else { return }
+        // Strong `self` capture is intentional: AppController is the app-lifetime
+        // NSApplication delegate, never deallocated. A weak capture could skip the
+        // completion and leave `isRefreshing` stuck true forever. The closures are
+        // transient (not stored on self), so there's no retain cycle.
+        workQueue.async {
             var fresh: [String: ProbeResult] = [:]
             for provider in toProbe {
                 fresh[provider.id] = provider.fetch(client: client, config: cfg.provider(provider.id))
@@ -116,14 +141,29 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateTitle() {
         guard let button = statusItem.button else { return }
         var worst: Double?
+        var anyFailure = false
         for provider in enabledProviders() {
-            if case .ok(let snap)? = results[provider.id], let h = snap.headlinePercent {
-                worst = max(worst ?? 0, h)
+            switch results[provider.id] {
+            case .ok(let snap)?:
+                if let h = snap.headlinePercent { worst = max(worst ?? 0, h) }
+            case .failure?:
+                anyFailure = true
+            default:
+                break
             }
         }
-        if let worst = worst {
+        if config.configError != nil {
+            // Failed closed on a bad config — make it visible, not silent.
+            button.title = " ⚠"
+            button.contentTintColor = .systemOrange
+        } else if let worst = worst {
             button.title = " \(Int(worst.rounded()))%"
             button.contentTintColor = worst >= 90 ? .systemRed : (worst >= 75 ? .systemOrange : nil)
+        } else if anyFailure {
+            // Every enabled provider errored and we have no number to show — a
+            // blank menu bar would hide that, so flag it.
+            button.title = " !"
+            button.contentTintColor = .systemRed
         } else {
             button.title = ""
             button.contentTintColor = nil
@@ -135,8 +175,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildMenu() {
         menu.removeAllItems()
 
+        if let err = config.configError {
+            menu.addItem(MenuRenderer.infoItem("⚠ \(err)", color: .systemOrange))
+            menu.addItem(.separator())
+        }
+
         let enabled = enabledProviders()
-        if enabled.isEmpty {
+        if enabled.isEmpty && config.configError == nil {
             menu.addItem(MenuRenderer.infoItem("No providers enabled", color: .secondaryLabelColor))
             menu.addItem(MenuRenderer.infoItem("Edit config to enable one →", color: .secondaryLabelColor))
         }
@@ -183,7 +228,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Menu delegate
 
-    func menuWillOpen(_ menu: NSMenu) {
+    public func menuWillOpen(_ menu: NSMenu) {
         // Rebuild from current data instantly so it's never empty…
         rebuildMenu()
         // …and kick a background refresh if the data is getting stale. Providers

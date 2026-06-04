@@ -17,6 +17,8 @@ final class CopilotProvider: Provider {
     private var lastFetch: Date?
     private var cachedUsage: [String: Any]?
 
+    func reset() { lastFetch = nil; cachedUsage = nil }
+
     func fetch(client: HTTPClient, config: ProviderConfig) -> ProbeResult {
         guard let token = loadToken() else {
             return .notConfigured(message: "Not logged in. Run `gh auth login`.")
@@ -69,6 +71,7 @@ final class CopilotProvider: Provider {
         var headline: Double?
         var plan: String?
 
+        var producedMetrics = false
         if let usage = usage {
             plan = JSON.str(usage["copilot_plan"]).map { Util.planLabel($0) }
 
@@ -84,17 +87,19 @@ final class CopilotProvider: Provider {
                                                format: .count(suffix: "left=\(Int(rem))"),
                                                resetsAt: resets))
                         headline = max(headline ?? 0, used / ent * 100)
+                        producedMetrics = true
                     } else if let pctRem = JSON.num(q["percent_remaining"]) {
                         let used = max(0, 100 - pctRem)
                         lines.append(.progress(label: label, used: used, limit: 100,
                                                format: .percent, resetsAt: resets))
                         headline = max(headline ?? 0, used)
+                        producedMetrics = true
                     }
                 }
             }
 
             // Free tier: limited_user_quotas (remaining) vs monthly_quotas (cap).
-            if lines.isEmpty, let limited = JSON.obj(usage["limited_user_quotas"]) {
+            if !producedMetrics, let limited = JSON.obj(usage["limited_user_quotas"]) {
                 let monthly = JSON.obj(usage["monthly_quotas"]) ?? [:]
                 let resets = Util.toDate(usage["limited_user_reset_date"])
                 for (key, label) in [("chat", "Chat"), ("completions", "Completions")] {
@@ -103,12 +108,19 @@ final class CopilotProvider: Provider {
                     lines.append(.progress(label: label, used: used, limit: cap,
                                            format: .count(suffix: "left=\(Int(rem))"), resetsAt: resets))
                     headline = max(headline ?? 0, used / cap * 100)
+                    producedMetrics = true
                 }
             }
         }
 
         if let n = staleNote { lines.append(.text(label: "Note", value: n)) }
-        if lines.isEmpty { lines.append(.badge(label: "Status", text: "No usage data")) }
+        if !producedMetrics {
+            if usage != nil {
+                lines.append(.badge(label: "Status", text: "API response not recognized — update may be needed"))
+            } else {
+                lines.append(.badge(label: "Status", text: "No usage data"))
+            }
+        }
 
         return ProviderSnapshot(providerID: id, displayName: displayName, plan: plan,
                                 lines: lines, fetchedAt: now, headlinePercent: headline)
@@ -119,25 +131,51 @@ final class CopilotProvider: Provider {
     /// Prefer the file (no keychain prompt), then the gh keychain item.
     private func loadToken() -> String? {
         if let text = Files.readText("~/.config/gh/hosts.yml"),
-           let token = scanOAuthToken(text) {
+           let token = CopilotProvider.parseGitHubToken(fromHostsYAML: text) {
             return token
         }
         // gh stores the token under service "gh:github.com" when keyring is used.
         if let raw = Keychain.readGenericPassword(service: "gh:github.com") {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            // The item is usually the bare token; tolerate a YAML/JSON-ish blob too.
-            return scanOAuthToken(trimmed) ?? (trimmed.isEmpty ? nil : trimmed)
+            // The keychain item is usually the bare token; tolerate a YAML blob too.
+            return CopilotProvider.parseGitHubToken(fromHostsYAML: trimmed)
+                ?? (trimmed.isEmpty ? nil : trimmed)
         }
         return nil
     }
 
-    /// Pull `oauth_token: <value>` out of gh's YAML without a YAML parser —
-    /// one field, one regex; no need to add a dependency for this.
-    private func scanOAuthToken(_ text: String) -> String? {
-        guard let r = text.range(of: #"oauth_token:\s*([^\s"']+)"#, options: .regularExpression) else { return nil }
-        let match = String(text[r])
-        guard let colon = match.firstIndex(of: ":") else { return nil }
-        let value = match[match.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+    /// Find the `oauth_token` that belongs specifically to the `github.com` host.
+    ///
+    /// gh's hosts.yml is keyed by host at the top level. If an enterprise host
+    /// (e.g. `git.corp.com:`) appears too, a naive "first oauth_token anywhere"
+    /// scan could grab the wrong account's token. This walks the file line by
+    /// line, tracks which top-level host block we're inside, and only returns a
+    /// token found within the `github.com` block. No YAML dependency — gh's shape
+    /// is simple enough for a scoped line scan.
+    static func parseGitHubToken(fromHostsYAML yaml: String) -> String? {
+        var inGitHub = false
+        for rawLine in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            if let first = line.first, first != " " && first != "\t" {
+                // Top-level line → a new host block (or stray content).
+                let key = line.prefix(while: { $0 != ":" }).trimmingCharacters(in: .whitespaces)
+                inGitHub = (key == "github.com")
+                continue
+            }
+            if inGitHub, let token = oauthTokenValue(inLine: line) {
+                return token
+            }
+        }
+        return nil
+    }
+
+    /// Extract the value of an `oauth_token:` line, tolerating optional quotes.
+    private static func oauthTokenValue(inLine line: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: #"oauth_token:\s*"?([^\s"']+)"?"#) else { return nil }
+        let ns = line as NSString
+        guard let m = re.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+              m.numberOfRanges > 1, m.range(at: 1).location != NSNotFound else { return nil }
+        let value = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
         return value.isEmpty ? nil : value
     }
 }

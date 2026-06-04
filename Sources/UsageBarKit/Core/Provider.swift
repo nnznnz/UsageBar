@@ -25,6 +25,16 @@ protocol Provider: AnyObject {
     /// (block the worker thread) — the HTTPClient is synchronous by design so
     /// providers read top-to-bottom with no callback soup.
     func fetch(client: HTTPClient, config: ProviderConfig) -> ProbeResult
+
+    /// Drop all cached usage / throttle state. Called when the provider is
+    /// disabled so re-enabling it later (or changing its config) starts clean
+    /// instead of surfacing stale data or honoring a stale throttle window.
+    func reset()
+}
+
+extension Provider {
+    /// Default: a provider with no cache state need do nothing.
+    func reset() {}
 }
 
 /// Per-provider configuration, parsed from the user's config file. Everything

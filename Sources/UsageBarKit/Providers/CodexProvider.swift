@@ -24,6 +24,11 @@ final class CodexProvider: Provider {
     private var lastFetch: Date?
     private var rateLimitedUntil: Date?
     private var cachedUsage: [String: Any]?
+    private var persistWarning: String?     // set if an opt-in token write-back failed
+
+    func reset() {
+        lastFetch = nil; rateLimitedUntil = nil; cachedUsage = nil; persistWarning = nil
+    }
 
     func fetch(client: HTTPClient, config: ProviderConfig) -> ProbeResult {
         guard var creds = loadCredentials() else {
@@ -85,6 +90,7 @@ final class CodexProvider: Provider {
                                rateNote: String?, staleNote: String?, now: Date) -> ProviderSnapshot {
         var lines: [MetricLine] = []
         var headline: Double?
+        var producedMetrics = false
         if let n = rateNote { lines.append(.badge(label: "Status", text: n)) }
 
         func addWindow(_ win: [String: Any]?, _ label: String) {
@@ -92,6 +98,7 @@ final class CodexProvider: Provider {
             lines.append(.progress(label: label, used: used, limit: 100,
                                    format: .percent, resetsAt: Util.toDate(win["reset_at"])))
             headline = max(headline ?? 0, used)
+            producedMetrics = true
         }
 
         if let usage = usage {
@@ -106,14 +113,23 @@ final class CodexProvider: Provider {
             if let credits = JSON.obj(usage["credits"]), JSON.bool(credits["has_credits"]) == true {
                 if JSON.bool(credits["unlimited"]) == true {
                     lines.append(.text(label: "Credits", value: "Unlimited"))
+                    producedMetrics = true
                 } else if let bal = JSON.num(credits["balance"]) {
                     lines.append(.text(label: "Credits", value: String(format: "$%.2f left", bal)))
+                    producedMetrics = true
                 }
             }
         }
 
+        if let w = persistWarning { lines.append(.text(label: "Note", value: w)) }
         if let n = staleNote { lines.append(.text(label: "Note", value: n)) }
-        if lines.isEmpty { lines.append(.badge(label: "Status", text: "No usage data")) }
+        if !producedMetrics {
+            if usage != nil {
+                lines.append(.badge(label: "Status", text: "API response not recognized — update may be needed"))
+            } else if rateNote == nil && staleNote == nil {
+                lines.append(.badge(label: "Status", text: "No usage data"))
+            }
+        }
 
         let plan = creds.planType.map { Util.planLabel($0) }
         return ProviderSnapshot(providerID: id, displayName: displayName, plan: plan,
@@ -155,7 +171,12 @@ final class CodexProvider: Provider {
             creds.accessToken = newToken
             if let r = JSON.str(json["refresh_token"]) { creds.refreshToken = r }
             if let idt = JSON.str(json["id_token"]) { creds.idToken = idt }
-            persist(creds)
+            if persist(creds) {
+                persistWarning = nil
+            } else {
+                persistWarning = "Token refreshed but couldn't be saved back to \(creds.source.kind)."
+                Log.error("codex: token refreshed but persistence FAILED")
+            }
             return newToken
         } catch {
             Log.warn("codex: token refresh error")
@@ -163,25 +184,42 @@ final class CodexProvider: Provider {
         }
     }
 
-    private func persist(_ creds: Creds) {
+    /// Write the refreshed credential back to its source. Atomic file write so a
+    /// crash mid-write can't corrupt the Codex CLI's auth.json. Returns false on
+    /// any failure rather than silently claiming success.
+    private func persist(_ creds: Creds) -> Bool {
         var tokens = JSON.obj(creds.fullData["tokens"]) ?? [:]
         tokens["access_token"] = creds.accessToken
         if let r = creds.refreshToken { tokens["refresh_token"] = r }
         if let idt = creds.idToken { tokens["id_token"] = idt }
         var full = creds.fullData
         full["tokens"] = tokens
-        guard let text = JSON.compactString(full) else { return }
+        guard let text = JSON.compactString(full) else { return false }
         switch creds.source {
         case .file(let path):
-            try? text.data(using: .utf8)?.write(to: URL(fileURLWithPath: Files.expand(path)))
+            do {
+                try Data(text.utf8).write(to: URL(fileURLWithPath: Files.expand(path)), options: [.atomic])
+                return true
+            } catch {
+                Log.error("codex: failed to write auth.json")
+                return false
+            }
         case .keychain(let service):
-            Keychain.updateGenericPassword(service: service, value: text)
+            return Keychain.updateGenericPassword(service: service, value: text)
         }
     }
 
     // MARK: Credentials
 
-    private enum Source { case file(path: String), keychain(service: String) }
+    private enum Source {
+        case file(path: String), keychain(service: String)
+        var kind: String {
+            switch self {
+            case .file: return "auth.json"
+            case .keychain: return "the keychain"
+            }
+        }
+    }
 
     private struct Creds {
         var accessToken: String

@@ -23,6 +23,8 @@ final class CursorProvider: Provider {
     private var cachedUsage: [String: Any]?
     private var cachedPlan: String?
 
+    func reset() { lastFetch = nil; cachedUsage = nil; cachedPlan = nil }
+
     func fetch(client: HTTPClient, config: ProviderConfig) -> ProbeResult {
         guard let token = loadAccessToken() else {
             return .notConfigured(message: "Not signed in to Cursor on this Mac.")
@@ -80,6 +82,7 @@ final class CursorProvider: Provider {
     private func buildSnapshot(usage: [String: Any]?, plan: String?, staleNote: String?, now: Date) -> ProviderSnapshot {
         var lines: [MetricLine] = []
         var headline: Double?
+        var producedMetrics = false
 
         if let usage = usage, let pu = JSON.obj(usage["planUsage"]) {
             let resets = Util.toDate(usage["billingCycleEnd"])
@@ -87,6 +90,7 @@ final class CursorProvider: Provider {
                 lines.append(.progress(label: "Plan usage", used: pct, limit: 100,
                                        format: .percent, resetsAt: resets))
                 headline = max(headline ?? 0, pct)
+                producedMetrics = true
             }
             if let included = JSON.num(pu["includedSpend"]), let limit = JSON.num(pu["limit"]), limit > 0 {
                 lines.append(.progress(label: "Spend",
@@ -94,6 +98,7 @@ final class CursorProvider: Provider {
                                        limit: Util.dollars(cents: limit),
                                        format: .dollars, resetsAt: resets))
                 if headline == nil { headline = included / limit * 100 }
+                producedMetrics = true
             }
             if let auto = JSON.num(pu["autoPercentUsed"]), auto > 0 {
                 lines.append(.text(label: "Auto", value: String(format: "%.0f%%", auto)))
@@ -104,7 +109,13 @@ final class CursorProvider: Provider {
         }
 
         if let n = staleNote { lines.append(.text(label: "Note", value: n)) }
-        if lines.isEmpty { lines.append(.badge(label: "Status", text: "No usage data")) }
+        if !producedMetrics {
+            if usage != nil {
+                lines.append(.badge(label: "Status", text: "API response not recognized — update may be needed"))
+            } else {
+                lines.append(.badge(label: "Status", text: "No usage data"))
+            }
+        }
 
         return ProviderSnapshot(providerID: id, displayName: displayName,
                                 plan: plan.map { Util.planLabel($0) },

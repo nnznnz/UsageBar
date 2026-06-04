@@ -1,0 +1,35 @@
+name: CI
+
+# Build and test on a real macOS runner. For a tool whose author develops it
+# elsewhere, this is the authoritative "does it actually compile and pass tests
+# on macOS" check.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build (release)
+        run: swift build -c release -v
+
+      - name: Test
+        run: swift test -v
+
+      - name: Assert no third-party dependencies crept in
+        run: |
+          if [ -f Package.resolved ]; then
+            echo "::error::Package.resolved exists — a dependency was added. This project must stay dependency-free."
+            cat Package.resolved
+            exit 1
+          fi
+          echo "OK: zero third-party dependencies."

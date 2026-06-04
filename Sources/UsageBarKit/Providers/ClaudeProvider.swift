@@ -34,6 +34,11 @@ final class ClaudeProvider: Provider {
     private var lastFetch: Date?
     private var rateLimitedUntil: Date?
     private var cachedUsage: [String: Any]?
+    private var persistWarning: String?     // set if an opt-in token write-back failed
+
+    func reset() {
+        lastFetch = nil; rateLimitedUntil = nil; cachedUsage = nil; persistWarning = nil
+    }
 
     // MARK: Probe
 
@@ -119,6 +124,7 @@ final class ClaudeProvider: Provider {
                                rateNote: String?, staleNote: String?, now: Date) -> ProviderSnapshot {
         var lines: [MetricLine] = []
         var headline: Double?
+        var producedMetrics = false   // did we recognize ANY usage field?
 
         if let note = rateNote { lines.append(.badge(label: "Status", text: note)) }
 
@@ -138,6 +144,7 @@ final class ClaudeProvider: Provider {
                 lines.append(.progress(label: w.label, used: util, limit: 100,
                                        format: .percent, resetsAt: resets))
                 headline = max(headline ?? 0, util)
+                producedMetrics = true
             }
 
             // On-demand overage credits (cents).
@@ -149,15 +156,27 @@ final class ClaudeProvider: Provider {
                                            used: Util.dollars(cents: usedC),
                                            limit: Util.dollars(cents: limitC),
                                            format: .dollars, resetsAt: nil))
+                    producedMetrics = true
                 } else if usedC > 0 {
                     lines.append(.text(label: "Extra usage",
                                        value: String(format: "$%.2f", Util.dollars(cents: usedC))))
+                    producedMetrics = true
                 }
             }
         }
 
+        if let w = persistWarning { lines.append(.text(label: "Note", value: w)) }
         if let note = staleNote { lines.append(.text(label: "Note", value: note)) }
-        if lines.isEmpty { lines.append(.badge(label: "Status", text: "No usage data")) }
+        if !producedMetrics {
+            // Authenticated and we got a response body, but recognized nothing →
+            // the undocumented API shape likely changed. Say so instead of the
+            // misleading "No usage data".
+            if usage != nil {
+                lines.append(.badge(label: "Status", text: "API response not recognized — update may be needed"))
+            } else if rateNote == nil && staleNote == nil {
+                lines.append(.badge(label: "Status", text: "No usage data"))
+            }
+        }
 
         return ProviderSnapshot(providerID: id, displayName: displayName,
                                 plan: planLabel(creds), lines: lines,
@@ -224,8 +243,15 @@ final class ClaudeProvider: Provider {
             if let expiresIn = JSON.num(json["expires_in"]) {
                 creds.expiresAtMs = Date().addingTimeInterval(expiresIn).timeIntervalSince1970 * 1000
             }
-            persist(creds)
-            Log.info("claude: token refreshed and persisted to \(creds.source)")
+            if persist(creds) {
+                persistWarning = nil
+                Log.info("claude: token refreshed and persisted to \(creds.source)")
+            } else {
+                // The in-memory token still works for this fetch, but Claude Code's
+                // own stored credential is now stale — surface it rather than hide it.
+                persistWarning = "Token refreshed but couldn't be saved back to \(creds.source.kind)."
+                Log.error("claude: token refreshed but persistence FAILED (\(creds.source))")
+            }
             return newToken
         } catch {
             Log.warn("claude: token refresh error")
@@ -233,21 +259,29 @@ final class ClaudeProvider: Provider {
         }
     }
 
-    private func persist(_ creds: Creds) {
-        // Rebuild the full credential object with our updated oauth fields.
+    /// Write the refreshed credential back to its source. Returns false (and does
+    /// not claim success) on any failure. File writes are ATOMIC so a crash mid-write
+    /// can't leave Claude Code's auth file half-written/corrupt.
+    private func persist(_ creds: Creds) -> Bool {
         var oauth = JSON.obj(creds.fullData["claudeAiOauth"]) ?? [:]
         oauth["accessToken"] = creds.accessToken
         if let r = creds.refreshToken { oauth["refreshToken"] = r }
         if let e = creds.expiresAtMs { oauth["expiresAt"] = e }
         var full = creds.fullData
         full["claudeAiOauth"] = oauth
-        guard let text = JSON.compactString(full) else { return }
+        guard let text = JSON.compactString(full) else { return false }
 
         switch creds.source {
         case .file(let path):
-            try? text.data(using: .utf8)?.write(to: URL(fileURLWithPath: Files.expand(path)))
+            do {
+                try Data(text.utf8).write(to: URL(fileURLWithPath: Files.expand(path)), options: [.atomic])
+                return true
+            } catch {
+                Log.error("claude: failed to write credentials file")
+                return false
+            }
         case .keychain(let service):
-            Keychain.updateGenericPassword(service: service, value: text)
+            return Keychain.updateGenericPassword(service: service, value: text)
         }
     }
 
@@ -261,6 +295,13 @@ final class ClaudeProvider: Provider {
             switch self {
             case .file(let p): return "file \(p)"
             case .keychain(let s): return "keychain \(s)"
+            }
+        }
+
+        var kind: String {
+            switch self {
+            case .file: return "the credentials file"
+            case .keychain: return "the keychain"
             }
         }
     }

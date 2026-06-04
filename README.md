@@ -25,13 +25,15 @@ This is the whole reason UsageBar exists, so it's not an afterthought:
    `Package.resolved` ever appears, something pulled in a dependency — treat that
    as a red flag.
 
-2. **Network egress is allowlisted.** Every outbound request is checked against a
-   hard allowlist that is the *union of the hosts each enabled provider declares*
-   — and nothing else. A request to any other host is blocked before a byte
-   leaves the machine (`Net/HTTPClient.swift`). Today the entire list is:
-   `api.anthropic.com`, `platform.claude.com`, `chatgpt.com`, `auth.openai.com`,
-   `api.github.com`, `api2.cursor.sh` — and only the ones for providers you've
-   turned on. Disable a provider and its hosts aren't even reachable.
+2. **Network egress is allowlisted (exact-host match).** Every outbound request
+   is checked against a hard allowlist that is the *union of the hosts each
+   enabled provider declares* — and nothing else. Matching is **exact**: allowing
+   `api.github.com` does NOT allow `evil.api.github.com` (a unit test enforces
+   this). A request to any other host is blocked before a byte leaves the machine
+   (`Net/HTTPClient.swift`). Today the entire list is: `api.anthropic.com`,
+   `platform.claude.com`, `chatgpt.com`, `auth.openai.com`, `api.github.com`,
+   `api2.cursor.sh` — and only the ones for providers you've turned on. Disable a
+   provider and its hosts aren't even reachable.
 
 3. **No redirects, HTTPS only.** A 3xx is never followed (a classic way to bounce
    an authenticated request to an attacker), and plain `http://` is refused. TLS
@@ -84,6 +86,19 @@ scripts/install-login-item.sh --remove   # undo
 
 Quick dev run without bundling: `swift run`.
 
+### Tests & CI
+
+```bash
+swift test     # unit tests for the security-critical logic
+```
+
+The suite covers the egress allowlist (exact-host matching, subdomain rejection),
+secret redaction across real token shapes, config fail-closed behavior, the
+Cursor SQLite URI escaping, and the gh `hosts.yml` multi-host token parsing. A
+[GitHub Actions workflow](.github/workflows/ci.yml) runs `swift build` + `swift
+test` on a macOS runner on every push and fails the build if any third-party
+dependency ever sneaks in (a `Package.resolved` appearing).
+
 ---
 
 ## What you'll see
@@ -133,6 +148,12 @@ Quit UsageBar
   don't have to restart.
 
 Edit it from the menu (**Open config…**) — it reveals the file in Finder.
+
+**Fails closed.** If `config.json` exists but can't be parsed (a stray comma, a
+typo), UsageBar does **not** fall back to defaults — it disables *every* provider
+and shows a ⚠ warning in the menu bar and menu, so a JSON mistake can never
+silently re-enable a provider you turned off. A missing file (first run) still
+gets the Claude-on default.
 
 ---
 

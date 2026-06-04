@@ -40,6 +40,21 @@ enum Log {
         out = replaceRegex(out, pattern: "[A-Za-z0-9_\\-]{20,}\\.[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}",
                            with: "‹redacted-jwt›")
 
+        // 4) Known token PREFIXES, anywhere — these don't need a field name or a
+        //    JWT shape, so the patterns above can miss a bare token in a log line.
+        //    GitHub: gho_/ghp_/ghs_/ghr_/ghu_ and github_pat_. OpenAI: sk-/sk-proj-.
+        //    Anthropic: sk-ant-. Order matters (most specific first).
+        let prefixPatterns: [String] = [
+            "gh[oprsu]_[A-Za-z0-9]{16,}",
+            "github_pat_[A-Za-z0-9_]{16,}",
+            "sk-ant-[A-Za-z0-9_\\-]{12,}",
+            "sk-proj-[A-Za-z0-9_\\-]{12,}",
+            "sk-[A-Za-z0-9]{16,}"
+        ]
+        for p in prefixPatterns {
+            out = replaceRegex(out, pattern: p, with: "‹redacted-token›")
+        }
+
         return out
     }
 
