@@ -1,6 +1,6 @@
 # Build output
 .build/
-UsageBar.app/
+UsageBar*.app/
 
 # SwiftPM — there should never be one of these (we have zero dependencies).
 # If it appears, a dependency sneaked in. Investigate before committing.
