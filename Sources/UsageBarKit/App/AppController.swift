@@ -47,7 +47,7 @@ public final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                                    accessibilityDescription: "Usage")
             button.image?.isTemplate = true
             button.imagePosition = .imageLeading
-            button.title = " …"
+            button.title = ""            // start clean: just the icon, no number
         }
         menu.delegate = self
         menu.autoenablesItems = false
@@ -140,33 +140,48 @@ public final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
     private func updateTitle() {
         guard let button = statusItem.button else { return }
-        var worst: Double?
+
+        // The menu bar stays clean: just the icon, no numbers. It only changes to
+        // an alert icon when something actually needs attention — a provider has
+        // hit its limit, the config is broken, or every enabled provider failed
+        // with no data to fall back on. The per-provider percentages live in the
+        // dropdown, not the bar.
+        func showIcon(_ symbol: String, tint: NSColor?) {
+            let image = NSImage(systemSymbolName: symbol,
+                                accessibilityDescription: tint == nil ? "Usage" : "Usage alert")
+            image?.isTemplate = true
+            button.image = image
+            button.contentTintColor = tint
+            button.title = ""
+        }
+
+        // Bad config fails closed — surface it rather than show a healthy icon.
+        if config.configError != nil {
+            showIcon("exclamationmark.triangle.fill", tint: .systemOrange)
+            return
+        }
+
+        var atLimit = false
         var anyFailure = false
+        var anyData = false
         for provider in enabledProviders() {
             switch results[provider.id] {
             case .ok(let snap)?:
-                if let h = snap.headlinePercent { worst = max(worst ?? 0, h) }
+                if let h = snap.headlinePercent {
+                    anyData = true
+                    if h >= 100 { atLimit = true }      // a window is maxed out
+                }
             case .failure?:
                 anyFailure = true
             default:
                 break
             }
         }
-        if config.configError != nil {
-            // Failed closed on a bad config — make it visible, not silent.
-            button.title = " ⚠"
-            button.contentTintColor = .systemOrange
-        } else if let worst = worst {
-            button.title = " \(Int(worst.rounded()))%"
-            button.contentTintColor = worst >= 90 ? .systemRed : (worst >= 75 ? .systemOrange : nil)
-        } else if anyFailure {
-            // Every enabled provider errored and we have no number to show — a
-            // blank menu bar would hide that, so flag it.
-            button.title = " !"
-            button.contentTintColor = .systemRed
+
+        if atLimit || (anyFailure && !anyData) {
+            showIcon("exclamationmark.triangle.fill", tint: .systemRed)
         } else {
-            button.title = ""
-            button.contentTintColor = nil
+            showIcon("chart.bar.fill", tint: nil)       // all good: just the icon
         }
     }
 
