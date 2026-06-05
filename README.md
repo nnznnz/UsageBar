@@ -103,9 +103,10 @@ dependency ever sneaks in (a `Package.resolved` appearing).
 
 ## What you'll see
 
-The menu-bar shows the single worst number across your enabled providers (e.g.
-`📊 78%`), turning orange ≥75% and red ≥90% so a near-limit jumps out. Click it
-for the breakdown — each provider's rolling windows as little bars:
+The menu-bar stays out of your way: just the icon (`📊`), no number. It turns
+into a red alert (`⚠`) only when an enabled provider maxes out a window (100%) —
+or every enabled provider errors — and an orange alert if your config can't be
+read. Click it for the breakdown — each provider's rolling windows as little bars:
 
 ```
 Claude — Max 20x
