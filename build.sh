@@ -14,7 +14,14 @@ cd "$(dirname "$0")"
 
 APP_NAME="UsageBar"
 BUNDLE_ID="ai.usagebar.personal"
-VERSION="1.0.0"
+
+# App version. Priority: explicit $VERSION (CI sets it from the git tag) → the
+# most recent git tag → a dev placeholder. A leading "v" (as in v1.2.3) is
+# stripped so CFBundleShortVersionString is a clean numeric string.
+VERSION="${VERSION:-$(git describe --tags --abbrev=0 2>/dev/null || true)}"
+VERSION="${VERSION#v}"
+VERSION="${VERSION:-0.0.0-dev}"
+echo "==> Version: $VERSION"
 
 echo "==> Building release binary (no third-party dependencies)…"
 swift build -c release

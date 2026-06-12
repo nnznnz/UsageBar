@@ -1,0 +1,69 @@
+name: Release
+
+# Publish a downloadable UsageBar.dmg as a GitHub Release asset whenever a
+# version tag (e.g. v1.0.0) is pushed. The existing ci.yml still runs on every
+# push/PR for build+test; this workflow is only for cutting a release.
+#
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# …produces a Release at github.com/<you>/UsageBar/releases with UsageBar.dmg
+# attached (no login needed to download, never expires).
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write        # required to create a Release and upload assets
+
+jobs:
+  release:
+    runs-on: macos-15     # Xcode 16 / Swift 6 toolchain, matches ci.yml
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app bundle
+        env:
+          VERSION: ${{ github.ref_name }}   # e.g. v1.0.0; build.sh strips the "v"
+        run: ./build.sh    # swift build -c release + bundle + ad-hoc codesign
+
+      - name: Package DMG
+        run: |
+          STAGING="dmg-staging"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          cp -R UsageBar.app "$STAGING/"
+          # A drag-to-install target so the .dmg window has an /Applications shortcut.
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create -volname "UsageBar" \
+            -srcfolder "$STAGING" -ov -format UDZO UsageBar.dmg
+          shasum -a 256 UsageBar.dmg > UsageBar.dmg.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}    # built-in gh CLI, no third-party action
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            UsageBar.dmg UsageBar.dmg.sha256 \
+            --title "UsageBar $GITHUB_REF_NAME" \
+            --notes "$(cat <<'NOTES'
+          ## Install
+
+          1. Download **UsageBar.dmg** below and open it.
+          2. Drag **UsageBar.app** onto the **Applications** shortcut.
+          3. Launch it — it appears in the menu bar (no Dock icon).
+
+          ### First launch (Gatekeeper)
+
+          This app is **ad-hoc signed, not notarized** (no paid Apple Developer
+          ID), so macOS will say it "cannot be checked for malicious software."
+          That is expected for a build-it-yourself tool. To open it:
+
+          - **Right-click UsageBar.app → Open → Open**, or
+          - run: `xattr -dr com.apple.quarantine /Applications/UsageBar.app`
+
+          You can always build from source instead (`./build.sh`) and verify the
+          download with `shasum -a 256 -c UsageBar.dmg.sha256`.
+          NOTES
+          )"
