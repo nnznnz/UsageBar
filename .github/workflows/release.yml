@@ -21,7 +21,9 @@ jobs:
   release:
     runs-on: macos-15     # Xcode 16 / Swift 6 toolchain, matches ci.yml
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to a commit SHA (not the mutable v4 tag) so the checked-out code
+      # can't change under us if the upstream tag is ever moved. SHA = v4.3.1.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Build app bundle
         env:
