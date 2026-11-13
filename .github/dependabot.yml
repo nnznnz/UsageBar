@@ -1,0 +1,18 @@
+# Dependabot version updates: weekly (Monday 06:00 Europe/Rome), minor+patch grouped per
+# ecosystem, majors each in their own PR. Security updates are NOT grouped here, so they
+# keep arriving immediately as individual PRs. Nothing auto-merges.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+    groups:
+      github-actions-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
